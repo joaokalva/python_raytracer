@@ -1,15 +1,56 @@
+from posixpath import split
+from types import TracebackType
+from examples.twoballs import WIDTH
 from math import dist
 from image import Image
 from ray import Ray
 from point import Point
 from color import Color
+import tempfile
+import shutil
+from pathlib import Path
+from multiprocessing import Value, Process
 
 class RenderEngine:
     """Renders 3D objects into 2D objects using raytracing"""
 
     MAX_DEPTH = 5
     MIN_DISPLACE = 0.0001
-        
+    
+    def render_multiprocess(self, scene, process_count, img_fileobj):
+        def split_range(count, parts):
+            d, r = divmod(count, parts)
+            return [
+                (i*d + min(i,r), (i+1)*d + min(i+1, r)) for i in range(parts)
+            ]
+            
+        width = scene.width
+        height = scene.height
+        ranges = split_range(height, process_count)
+        temp_dir = Path(tempfile.mkdtemp())
+        temp_file_tmpl = "puray-part-{}.temp"
+        processes = []
+        try:
+            rows_done = Value("i", 0)
+            for hmin, hmax in ranges:
+                part_file = temp_dir / temp_file_tmpl.format(hmin)
+                processes.append(
+                    Process(
+                        target=self.render,
+                        args=(scene,hmin,hmax,part_file,rows_done), 
+                        )
+                    )
+                #Start all processes
+                for process in processes:
+                    process.start()
+                # Wait for processes to finish
+                for process in processes:
+                    process.join()
+                # Construct the image by joining all parts
+                        
+        finally:
+            shutil.rmtree(temp_dir)
+                
     def render(self, scene):
         width = scene.width
         height = scene.height
@@ -66,7 +107,7 @@ class RenderEngine:
         obj_color = material.color_at(hit_pos)
         to_cam = scene.camera - hit_pos
         specular_k = 50
-        color = material.ambient * Color.from_hex("#000000")
+        color = material.ambient * Color.from_hex("#FFFFFF")
         # Light calculations
         for light in scene.lights:
             to_light = Ray(hit_pos, light.position - hit_pos)
